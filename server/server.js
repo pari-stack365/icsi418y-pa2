@@ -1,31 +1,85 @@
-require("dotenv").config();
+require('dotenv').config();
 
-const express = require("express");
-const cors = require("cors");
-const { MongoClient } = require("mongodb");
+const express = require('express');
+const cors = require('cors');
+const { MongoClient } = require('mongodb');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const client = new MongoClient(process.env.MONGO_URI);
+const users = client.db('pa2').collection('users');
 
 app.use(express.json());
 app.use(cors());
 
-app.get("/", (req, res) => {
-    res.json({ message: "Server is running" });
+app.get('/', (req, res) => {
+  res.json({ message: 'Server is running' });
+});
+
+app.post('/signup', async (req, res) => {
+  const { f_name, l_name, username, password } = req.body;
+
+  if (![f_name, l_name, username, password].every(value => typeof value === 'string' && value.trim())) {
+    return res.status(400).json({ message: 'Please fill in all fields.' });
+  }
+
+  try {
+    const name = username.trim();
+    const existingUser = await users.findOne({ username: name });
+
+    if (existingUser) {
+      return res.status(409).json({ message: 'Username already exists.' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await users.insertOne({
+      f_name: f_name.trim(),
+      l_name: l_name.trim(),
+      username: name,
+      password: hashedPassword
+    });
+
+    return res.status(201).json({ message: 'Account created successfully.' });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({ message: 'Username already exists.' });
+    }
+    console.error(error);
+    return res.status(500).json({ message: 'Server error.' });
+  }
+});
+
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+
+  if (![username, password].every(value => typeof value === 'string' && value.trim())) {
+    return res.status(400).json({ message: 'Enter a username and password.' });
+  }
+
+  try {
+    const user = await users.findOne({ username: username.trim() });
+
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({ message: 'Invalid username or password.' });
+    }
+
+    return res.status(200).json({ message: 'Login successful.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: 'Server error.' });
+  }
 });
 
 async function connectDatabase() {
-    try {
-        await client.connect();
-        console.log("Connected to MongoDB");
-    } catch (error) {
-        console.error("Could not connect to MongoDB");
-        console.error(error);
-    }
+  try {
+    await client.connect();
+    await users.createIndex({ username: 1 }, { unique: true });
+    console.log('Connected to MongoDB');
+    app.listen(9000, () => console.log('Server running on port 9000'));
+  } catch (error) {
+    console.error('Could not connect to MongoDB');
+    console.error(error);
+  }
 }
 
 connectDatabase();
-
-app.listen(9000, () => {
-    console.log("Server running on port 9000");
-});
